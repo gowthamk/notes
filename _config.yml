@@ -1,0 +1,5 @@
+name: Catalyst
+markdown: kramdown
+pygments: true
+port: 4000
+baseurl: "https://www.cs.purdue.edu/sss/projects/catalyst"

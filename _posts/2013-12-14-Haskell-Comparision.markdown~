@@ -1,0 +1,774 @@
+---
+layout: post
+title:  "Haskell Comparision"
+---
+
+# Catalyst's Type System from Haskell's Type System#
+
+In this writeup, we start with Haskell's type system equipped with
+recent developments, such as GADTs [Schrijvers et. al., ICFP'09] and
+Datakinds [Weirich et. al., TLDI'12], and gradually arrive at
+Catalyst style relational types. The motivation behind this exercise
+is to develop a formal and well-understood platform to talk about
+relational types. We take Haskell's type system as our starting point
+primarily because it offers basic dependent typing through GADTs and
+Datakinds, and also because its semantics are well-understood. This
+write-up does not assume any prior knowledge of GADTs or Datakinds in
+Haskell.
+
+## GADTs ##
+
+Generalized Algebraic Datatypes (GADTs), or Generalized Recursive
+Datatypes (GRDTs), were introduced in [Hongwei Xi et. al., POPL'03].
+They are a generalization of regular algebraic datatypes in that the
+return types of distinct value constructors of the the datatype
+constructor (call it K) can differ, given that their top-level type
+constructor remains K. The following Ocaml example defines a
+list GADT (named vec to avoid name clash), whose constructors can
+return an _empty list_ or _non-empty list_:
+
+{% highlight ocaml %}
+    (********* Empty vs Non-empty list *****)
+    module List1 = struct
+      type empty
+
+      type nonempty
+
+      type (_,_) vec = 
+        (* Notice that return types are defined, 
+          unlike traditional list definition. *)
+        | Nil: ('a,empty) vec
+        | Cons : 'a * ('a,'b) vec -> ('a,nonempty) vec
+
+      (* vec is a type constructor with kind * -> * -> *  
+       *)
+
+      (* Head expects its input list to be non-empty as
+         its pre-condition 
+       *)
+      let head : ('a,nonempty) vec -> 'a = function
+      (* Due to the specified pre-condition, the following
+         match is exhaustive
+       *)
+        | Cons (x,xs) -> x;;
+
+      (* Pre-condition of head function is statically enforced.
+         The following doesn't type-check.  
+       *)
+      (*let x = root Empty;;*)
+
+      let rec length : type s. ('a,s) vec -> int = function
+        | Nil -> 0
+        | Cons (x,xs) -> 1 + (length xs);;
+
+    end;;
+{% endhighlight %}
+
+Notice that we were able to achieve the same effect as having a type
+refinement specifying "emptyness" of lists in the above example. 
+
+We can also define a length-indexed list GADT in Ocaml:
+
+{% highlight ocaml %}
+    (******** length-indexed *******)
+    module LengthIndexedList = struct
+      type zero
+      type 'a succ
+
+      type (_,_) vec =
+        | Nil : ('a,zero) vec
+        | Cons : 'a * ('a,'b) vec -> ('a,'b succ) vec
+
+      (* map2 requires that its input lists be of same length.
+       *)
+      let rec map2 : type s. ('a*'b -> 'c) -> ('a,s) vec -> ('b,s) vec
+        -> ('c,s) vec = fun f -> fun v1 -> fun v2 -> match (v1,v2) with
+            (* Due to pre-condition, the following case-match is
+               exhaustive *)
+          | (Nil, Nil) -> Nil
+          | (Cons(x1,xs1), Cons(x2,xs2)) -> Cons (f(x1,x2), 
+            map2 f xs1 xs2);;
+
+      let rec listmap2 f l1 l2 = match (l1,l2) with
+        (* Similar case-match with regular lists is non-exhaustive. *)
+        (* Compiler throws a warning here. *)
+        | ([],[]) -> []
+        | (x1::xs1, x2::xs2) -> (f(x1,x2))::(listmap2 f xs1 xs2);;
+
+      (* We reap benifits of strong type of map2 *)
+      (* Following code doesn't typecheck *)
+      (*
+      let l1 = Cons (1, Cons(2, Nil)) in
+      let l2 = Cons (3, Cons (2, Cons(1, Nil))) in
+        map2 (fun x -> x) l1 l2;;
+      *)
+    end;;
+{% endhighlight %}
+
+The above example also achieves the same effect as a refinement (not
+dependent) type system while typing map2 function.
+
+## Type Functions and Datakinds ##
+
+Consider the list concat function in Ocaml. We would ideally like
+write following type for concat:
+
+    concat : type s1. type s2. ('a,s1) vec -> ('a,s2) vec -> 
+              ('a, Plus s1 s2) vec
+
+In the above type, Plus is a type level function. If the above type is
+legal, then we have effectively assigned a dependent type to concat.
+However, we cannot write type-level functions such as Plus in Ocaml.
+In fact, with `*` as the only (base) kind, we can only assign `* -> * ->
+*` kind to Plus, which is not quite appropriate.
+
+Haskell addressed this problem with following enhancements:
+
+1. Allowing type-level functions (called indexed type families in
+   Haskell),
+2. Automatically promoting certain datatype constructors to kind
+   level, and corresponding value constructors to type level.
+   Consequently, 
+ 1. kind universe is now inhabited by many different kinds, and 
+ 2. type constructors and type functions can now be assigned
+    appropriate kinds.
+
+In Haskell, length-indexed list example can be written as following:
+
+{% highlight haskell %}
+    {-# LANGUAGE GADTs #-}
+    {-# LANGUAGE TypeFamilies #-}
+    {-# LANGUAGE DataKinds #-}
+    {-# LANGUAGE PolyKinds #-}
+    {-# LANGUAGE FlexibleInstances #-}
+
+    -- Demonstrate data type promotion to datakind
+
+    module LengthIndexedList where
+
+      data Nat = Zero | Succ Nat
+      -- Nat is promoted to kind level Nat.
+      -- Zero to type level 'Zero of kind Nat, and
+      -- Succ of type level 'Succ of kind Nat -> Nat
+
+      --  We define Plus as an indexed type family,
+      --  which is equivalent to a type-level function
+      type family Plus (a :: Nat) (b :: Nat) ::  Nat
+      type instance Plus 'Zero b = b
+      type instance Plus ('Succ a) b = 'Succ (Plus a b)
+
+      data Vec :: * -> Nat -> * where
+        Nil :: Vec a 'Zero
+        Cons :: a -> Vec a n -> Vec a ('Succ n)
+
+      concat :: Vec a n1 -> Vec a n2 -> Vec a (Plus n1 n2)
+      concat Nil v2 = v2
+      concat (Cons x xs) v2 = Cons x (concat xs v2)
+{% endhighlight %}
+
+Observe that the type-level function Plus in the above example is
+well-kinded with its kind as `Nat -> Nat -> Nat`.
+
+Suppose you now want to also index list datatype with cardinality
+(empty/non-empty). You will have to re-define list GADT as shown
+below:
+
+{% highlight haskell %}
+
+      data Cardinality = Empty | Non-empty
+      -- Cardinality is promoted to kind-level Cardinality
+      -- Empty and Non-empty promoted to type level 'Empty and
+      -- 'Non-empty
+
+      data Nat = Zero | Succ Nat
+      -- Nat is promoted to kind level Nat.
+      -- Zero to type level 'Zero of kind Nat, and
+      -- Succ of type level 'Succ of kind Nat -> Nat
+
+      data Vec :: * -> Nat -> Cardinality -> * where
+        Nil :: Vec a 'Zero Empty
+        Cons :: a -> Vec a n c -> Vec a ('Succ n) 'Non-empty
+
+{% endhighlight %}
+
+This sort of re-definition is inevitable if we want to extend a
+datatype in current-day haskell. Also, as we track more and more
+properties of lists, index annotations for indexed types become too
+many and type annotations over functions become bloated. Although,
+such type annotations over functions are optional in Haskell,
+programmers would increasingly want to annotate functions for clarity,
+as types become complex. Keeping these observations in mind, we begin
+an exercise where we extend Haskell with convenient syntax to address
+above issues.
+
+First, we extend the type language with type-projection functions from
+universe of terms to universe of types. Consequently, the _sort_ of
+type projection function is an arrow that has a type name to its left
+and a kind name to its right. We define one type-projection function
+for each index of the indexed type. The projection function for an
+index, besides naming that index, defines the constraint that has to
+be imposed  over the argument types of value constructor used to
+construct the term of indexed type. For eg, consider the following
+definition of type-projection `length` over list GADT (We retain
+defintions of `Cardinality` and `Nat` from the previous example.
+However, we assume the definition of `vec` datatype that is
+un-indexed.):
+
+{% highlight haskell %}
+    type-projection length (Nil) = 'Zero
+    type-projection length (Cons x xs) = 'Succ (length xs)
+{% endhighlight %}
+
+The _sort_ of `length` is `Vec a -> Nat`, where `Vec a` is the type
+and `Nat` is the kind. The above definition effectively conveys that
+`Vec a` datatype is indexed by the type of `Nat` kind, and assigns the
+name _length_ to that index. Therefore, this definition is equivalent
+to the the definition of `Vec a n` haskell type that we defined
+previously and reproduced here:
+
+{% highlight haskell %}
+    data Vec :: * -> Nat -> * where
+        Nil :: Vec a 'Zero
+        Cons :: a -> Vec a n -> Vec a ('Succ n)
+{% endhighlight %}
+
+On the similar note, let us define another type-projection function
+called cardinality that introduces another index for list datatypes:
+
+{% highlight haskell %}
+    type-projection cardinality (Nil) = 'Empty
+    type-projection length (Cons x xs) = 'Non-empty
+{% endhighlight %}
+
+cardinality has sort `Vec a -> Cardinality`, where `Vec a` is the type
+and `Cardinality` is the kind. With both length and cardinality type-
+projection functions, the `Vec a` datatype, when elaborated, is
+semantically equivalent to the `Vec a n c` datatype, which is `Vec a`
+indexed with length (n) and cardinality (c).
+
+The types of value constructors Nil and Cons of `Vec a` indexed by
+length and cardinality, can be equivalently represented in the
+de-facto format of dependent types as following:
+
+    Nil : {v : Vec a | length(v) = 'Zero /\ cardinality(v) = 'Empty};
+    Cons : {x:a} -> {xs : Vec a} -> {v : Vec a | length(v) = 'Succ (length(xs)) /\ 
+                                                 cardinality(v) = 'Non-empty};
+
+The type of list concat function that has the following haskell type for
+length and cardinality indexed haskell list (`Vec a n c`):
+
+{% highlight haskell %}
+    concat :: Vec a n1 c1 -> Vec a n2 c2 -> Vec a (Plus n1 n2) c3
+{% endhighlight %}
+
+can be equivalently written in the dependent type notation as
+
+    concat : {l1 : Vec a} -> {l2 : Vec a} -> {v : Vec a | length(v) =
+        Plus (length l1) (length l2)}
+
+where, type-level function Plus retains its semantics. This was
+possible because type-projection function length returns a type of
+kind Nat, which is what Plus expects.
+
+Type-level functions are frequently used in type indexes while
+defining a haskell datatype. Since type-projections are only explicit
+representations of type indexes, type functions can also be used via
+projections to define indexes. For eg, consider the following haskell
+module that defines Parity (Even/Odd) indexed Nat datatype:
+
+{% highlight haskell %}
+    module EvenOdd where
+
+      data Parity = Even | Odd
+      -- Parity is promoted to kind level Parity.
+      -- Even & Odd to type level 'Even & 'Odd of kind Parity
+
+      -- We define type-function opp to establish the relation that
+      -- type 'Even is opposite of 'Odd, and vice-versa
+      type family Flip (n :: Parity) :: Parity
+      type instance Flip 'Even = 'Odd
+      type instance Flip 'Odd = 'Even
+      
+     -- We tag natural number with the type of its parity
+      data Nat :: Parity -> * where
+         Zero :: Nat 'Even
+         Succ :: Nat (Opp p) -> Nat p
+{% endhighlight %}
+
+Using traditional un-indexed Nat datatype as our starting point,
+Parity indexed Nat can also be defined by defining the the following
+type projection function:
+
+    type-projection parity (Zero) = 'Even
+    type-projection parity (Succ n) = Flip (parity(n))
+
+Notice that type-projection `parity` uses type-level function `Flip`
+to define the parity index for Nat datatype. If needed, we can also
+define another index named `inverse-parity` to track inverted parity
+separately, using `Flip`:
+
+    type-projection inverse-parity (n) = Flip (parity (n))
+
+## Dependent type checking in presence of type projections ##
+
+In this section, we argue that GHC's type checker is sufficient to
+type check Haskell programs even in presence of type projections. This
+is possible because type-projections are only a syntactic convenience. 
+They can be _elaborated away_ into indexes for datatypes, as described
+in previous section. Type refinement syntax can also be converted to
+usual haskell type syntax. For eg, subseqent to the elaboration of
+`length` type projection together with `Vec a` datatype to produce an
+indexed `Vec a n` datatype, the following type of concat function:
+
+    concat : {l1 : Vec a} -> {l2 : Vec a} -> {v : Vec a | length(v) =
+        Plus (length l1) (length l2)}
+
+can be elaborated as
+
+    concat : Vec a n1 -> Vec a n2 -> Vec a (Plus n1 n2)
+
+The result of such elaboration is a valid haskell program which can be
+type checked by GHC.
+
+Alternatively, one might wonder if the usual dependent type checking
+rules suffice to type-check haskell functions.  We experiment with
+haskell concat function in the following example:
+
+{% highlight haskell %}
+    concat : {l1 : Vec a} -> {l2 : Vec a} -> {v : Vec a | length(v) =
+        Plus (length l1) (length l2)}
+    concat Nil = Nil
+    concat (Cons x xs) = 
+      -- length l1 = 'Succ (length xs) -- (1)
+      let v1 = concat xs l2 
+          -- length v1 = Plus (length xs) (length l2) -- (2)
+          v2 = Cons x v1
+          -- length v2 = 'Succ (length v1) -- (3)
+      in v2 -- length v2 = Plus (length l1) (length l2) ??
+      -- Let us define aliases:
+      -- n1 = length l1; n1' = length xs; n2 = length l2;
+      -- n = length n; nv1 = length v1; nv2 = length v2;
+      -- then the generated verification condition can be represented
+      -- as:
+      -- n1 = 'Succ n1'; nv1 = Plus n1' n2; nv2 = 'Succ nv1; n = nv2;
+      --  ⊢ n = Plus n1 n2
+{% endhighlight %}
+
+One thing to notice in the above example is that the generated
+verification condition, when substantiated with constraints from
+environment (eg: type equations for type-function `Plus`), can be
+discharged by GHC's constraint solver! This example suggests that a
+dependent type checker that uses GHC's constraint solver as a decision
+procedure can be used to type check haskell extended with
+type-projections.
+
+## GHC type checking with external decision procedures ##
+
+Now, consider a different question. Suppose we have access to an
+external decision procedure for linear arithmetic. How do we make use
+of such decision procedure to type check functions over length-indexed
+lists, such as concat? What should be the type of the length index in
+such case? To answer these questions, we must first define the
+interface of the linear arithmentic decision procedure (A-DP). Since
+such interface only extends type language, it must provide a kind,
+and some type-level functions over such kind. Consequently, types in
+abstract world of decision procedures become kinds in concrete world
+of haskell programs, and term-level functions offered by decision
+procedures become type-level functions in haskell programs. In this
+example, A-DP provides a kind called `Int`, and type-level functions
+over `Int` such as `Plus`, `Minus` etc., which are modeled after
+linear arithmetic functions. A-DP also defines an equality relation
+over `Int`s . 
+
+But, how do we create types of abstract kind `Int` in haskell
+programs? Recall that haskell kind `Int` models the integer type in
+the abstract world of decision procedures. As inhabitants of int type
+in abstract world are integer terms, the inhabitants of `Int` kind in
+concrete world must be integer terms promoted to the level of types.
+Fortunately, we already have a construct that does such promotion -
+type-projection. We therefore claim through our A-DP interface that
+there is a type-projection function from terms of type int to types of
+kind Int. We name the projection function as `IntOf`. 
+
+The interface to A-DP conforming to above requirements, if defined in
+a language similar to ML module language, would look like the
+following:
+
+{% highlight ocaml %}
+    type-lang-signature A-DP =
+    sig
+      kind Int
+      type-projection IntOf : int :-> Int
+      type-fun Succ : Int -> Int
+      type-fun Plus : Int -> Int -> Int
+      type-fun Minus : Int -> Int -> Int
+      type-fun (=) : Int -> Int -> Int Assertion (* Assertion is 
+        the universal kind of type refinements *)
+      (* The interface to discharge Int Assertion can 
+         be declared seperately *)
+    end
+{% endhighlight %}
+
+Equipped with this interface, we can redefine the length indexed list
+datatype in the conventional Haskell syntax:
+
+{% highlight haskell %}
+    data Vec :: * -> Int -> * where
+        Nil :: Vec a (IntOf(0))
+        Cons :: a -> Vec a n -> Vec a (Succ n)
+{% endhighlight %}
+
+We can also define the same using type-projection syntax:
+
+{% highlight haskell %}
+    type-projection length (Nil) = IntOf(0)
+    type-projection length (Cons x xs) = Succ (length xs)
+{% endhighlight %}
+
+### Type checking with A-DP
+
+Notice that A-DP defines a type projection function over integers. As
+per our semantics of type projections, this means that haskell
+integers are now indexed by types of kind Int. That is, kind of int
+type in haskell is now `Int -> *`, instead of `*`. This has two
+consequences:
+
+1. Types of integer functions in haskell prelude have to be modified
+   to reflect the indexing. For eg, the type of infix plus operator
+   should be: `(+) :: int n1 -> int n2 -> int (Plus n1 n2) `. This is
+   should not be a problem.
+2. Since integers are very prevelant, there is an O(n) increase in the
+   space complexity of type checking process, where n is the number of
+   variables in (A-normalized) haskell program.
+
+Modulo the aforementioned consequences, type checking process remains
+the same as previous till the point of VC generation. Once VC is
+generated, it should be handed over to the A-DP to decide its
+validity. For this purpose, A-DP will have to provide a separate
+interface accessible to the GHC's type checker. Haskell's `constraint`
+type could prove to be very useful in defining this interface.
+Nevertheless, We shall defer the discussion on nature of this
+interface to a later time.
+
+## Correspondence with relational types and Catalyst  ##
+
+To summarize what we have done so far:
+
+1. We have extended Haskell with a convenient `type-projection` syntax
+   to equip GADTs with indexes. Despite its utility, it is a mere
+   cosmetic enhancement.
+2. We have shown that there is no change in type checking process
+   despite adding projections, as they can be _elaborated away_ as
+   indexes of GADTs.
+3. Since GHC already supports kinds and type functions, we have
+   observed that a simple interface providing a new kind and
+   type-level functions is sufficient to take advantage of external
+   decision procedures for dependent type checking in Haskell. Since
+   promotion of terms to types can be achived using projections, which
+   can be elaborated away, GHC's type checker is sufficient to produce
+   verification conditions. VCs should be handed over to external
+   decision procedures to decide their validity.
+
+The motivation behind this exercise would have been clear by now. We
+will now argue that we have sufficiently extended haskell to
+accommodate relational types (excluding recent generalizations of
+parametricity).  We will first present a well-kinded interface to the
+decision procedure for relations (basically, a `Relation` kind
+provider). We will then observe the correspondence between structural
+relations defined using `relation` keyword, and `type-projection`
+definitions.  Since we have already established the validity of
+GHC's type checking process in the presence of type projections and
+kind providers, we conclude that :
+
+1. Progress result for haskell's type system is directly applicable to
+   (non-parametric) relational type system.
+2. Proving decidability of type checking reduces to proving the
+   decidability of equivalence of two types of `Relation Assertion`
+   kind (refer to R-DP signature in next section.). This further
+   reduces to proving the equivalence of formulas in the logic of
+   relations. The logic is known to be decidable.
+3. Type preservation lemma requires proving that the type of kind
+   `Relation` (refer to R-DP) ascribed to a term t is equivalent to
+   another type of kind `Relation` ascribed to term t', which is the
+   result of t taking a step. 
+
+### R-DP - The interface to relational decision procedure ###
+
+Similar to A-DP, we define the interface to R-DP as ML-style
+signature, but at type-level:
+
+{% highlight ocaml %}
+    type-lang-signature R-DP =
+    sig
+      kind Relation
+      type EmptyRel : Relation
+      type-projection 'a. IdRelOf : 'a :-> Relation
+      type-fun Union : Relation -> Relation -> Relation
+      type-fun Intersection : Relation -> Relation -> Relation
+      type-fun CrossPrd : Relation -> Relation -> Relation
+      type-fun Difference : Relation -> Relation -> Relation
+      type-fun (=) : Relation -> Relation -> Relation Assertion (* Assertion is 
+        the universal kind of type refinements *)
+
+    end
+{% endhighlight %}
+
+Notice that R-DP provides just one type projection function -
+`IdRelOf`, which lifts the terms of any type to type-level by creating
+identity relations. This might be a little unsettling as `IdRelOf`
+effectively introduces indexes even for polymorphic type variables.
+Nevertheless, we argue that this is not a problem, as indexing
+polymorphic type variables effectively means that we are only
+quantifying over all indexed types. Since all types are indeed
+indexed, we do not lose any generality. Moreover, using type variables
+to quantify over indexed types is not new to haskell, as following
+valid haskell code demonstrates:
+
+{% highlight haskell %}
+    -- type var a ranges only over Nat indexed datatypes
+    class NatIndexedFns (a :: Nat -> *) where
+      id :: a n -> a n
+{% endhighlight %}
+
+Another source of possible consternation in the definition of R-DP
+iterface is that we have a kind `Relation` which is all-encompassing.
+Ideally, we would like to attribute following type to IdRelOf:
+
+    IdRelOf : 'a :-> 'a Relation
+
+Unfortunately, the expression `'a Relation` is not well-sorted because
+'a is a type, whereas Relation is a kind. However, this is only a
+shallow explanation. The real cause is that, in order for R-DP to
+act as a decision procedure for assertions over `'a Relation`s, it
+must be aware of what 'a is. Since our decision procedure for
+relations (ala Catalyst) treats all types as uninterpreted sorts, R-DP
+should be able to claim that it is aware of all Haskell types. Since
+types in abstract world are kinds in concrete world, R-DP should be
+able to assert the presence of a haskell kind 'A for every type 'a.
+That is, it should be able to offer a _kind constructor_ for every
+haskell type:
+
+    kind-cons AbsKindOf : * :-> O
+
+Where `*` denotes type of any kind, and O is the only inhabitant of
+the sort universe (universe above kinds) in Haskell.
+
+Although possible, we do not attempt the exercise of defining kind
+constructors because of two reasons:
+
+1. Even with kinds like `'A Relation`, we cannot assign precise kinds
+   to all type-functions of R-DP. For eg, we cannot assign a precise
+   return kind to `CrossPrd` type function without kind-level
+   functions.
+2. We do not want to complicate the kind system of Haskell.
+
+We must therefore be content with all-encompassing kind of `Relation`
+for relations of any type, and consign well-formedness judgement of
+relational operations to meta-theory.
+
+### Relation definitions are type projections ###
+
+The correspondence between definition of structural relations and
+type-projections is apparent at the level of syntax. Here is the
+definition of head relation over lists in Catalyst:
+
+    relation Rhd (x::xs) = {(x)} 
+    relation Rhd (Nil)    = {()}
+
+The same could be written in type-projection syntax using type
+functions from R-DP as:
+
+    type-projection Rhd (x::xs) = IdRelOf(x)
+    type-projection Rhd (Nil) = EmptyRel
+
+when elaborated, both lead to effectively same type refinements for
+constructors `::` and `Nil` of list datatype.
+
+We will have to let go our star operator to create inductive relations
+out of non-inductive relations, as R-DP interface has to observe the
+recursive structure of datatypes to provide star operator. This
+violates the modularity property of R-DP interface, and also places
+the decision procedure at the same level as GHC's type checker,
+thus jeopardising soundness of type checking. Instead, inductive
+relations, such as Rmem and Rob, can be defined directly as type
+projections:
+
+    type-projection Rmem (x::xs) = Union (IdRelOf(x)) (Rmem(xs))
+    type-projection Rmem (Nil) = EmptyRel
+    
+    type-projection Rob (x::xs) = Union (CrossPrd (IdRelOf(x)) (Rmem(xs)))
+                                        (Rob(xs))
+    type-projection Rob (Nil) = EmptyRel
+
+### Type checking ###
+
+As in the case of A-DP, GHC's type checker is sufficient to generate
+verification conditions even when type language is equipped with R-DP
+interface. The verification condition represents the following
+judgement:
+
+
+
+## Kind-level polymorphism and parametric type projections ##
+
+Consider the usual definition of list datatype in Haskell:
+
+{% highlight haskell %}
+    data List a = Nil | Cons a (List a)
+{% endhighlight %}
+
+The datatype is eligible for promotion as per [Weirich et. al.,
+TLDI'12]. Therefore, List is promoted to kind-level List, and Nil and
+Cons are promoted to type-level `'Nil` and `'Cons` respectively. But,
+List was a polymorphic type constructor. Consequently, its promoted
+version becomes a kind constructor, which is polymorphic in its kind
+argument. This is demonstrated in the following code snippets
+interpreted by interactive GHC (Note: `:k exp` prints the kind of haskell
+type expression exp):
+
+    Prelude> data List a = Nil | Cons a (List a)
+    Prelude> :k List
+    List :: * -> *
+    Prelude> :k ('Cons List 'Nil)
+    ('Cons List 'Nil) :: List (* -> *)
+    Prelude> data Nat = Zero | Succ Nat
+    Prelude> :k ('Cons 'Zero 'Nil)
+    ('Cons 'Zero 'Nil) :: List Nat
+
+Similarly, `'Nil` and `'Cons` are polymorphic type constructors with
+following kinds:
+
+    'Nil : ∀χ. List χ
+    'Cons : ∀χ. χ → List χ -> List χ 
+
+Where, χ is a kind variable (just as 'a is a type variable in ML). We
+say that 'Nil and 'Cons are kind-polymorphic.
+
+Such kind-polymorphism is useful in defining heterogeneous list as
+shown in the below example:
+
+{% highlight haskell %}
+    data HList :: (List *) -> * where
+        HNil :: HList 'Nil
+        HCons :: a -> HList as -> HList ('Cons a as)
+
+    l1 :: HList ('Cons String ('Cons Bool 'Nil))
+    l1  = HCons "Hello" (HCons True HNil)
+{% endhighlight %}
+
+Compare the type constructor `'Cons` with type-level function `Plus`
+defined previously. While Plus is only defined over types of kind Nat,
+'Cons is kind-polymorphic. That means, its argument need not be `a`,
+but if a is an indexed type (eg: `Vec a n`), it could as well be the
+type of the index. Unfortunately, with current haskell syntax, there
+is no way of appealing to the (possible) indexes of `a`. Consequently,
+the type of heterogenous list of homogenous lists, which is indexed by
+
+1. list of types of component lists, and 
+2. list of lengths of component lists 
+
+has to be defined separately as:
+
+{% highlight haskell %}
+    data HList :: (List *) -> (List Nat) -> * where               
+        HNil :: HList 'Nil 'Nil
+        HCons :: Vec a n -> HList as ns -> HList ('Cons a as) ('Cons n ns)
+{% endhighlight %}
+
+The problem that the above example tries to explicate is that, even
+though `'Cons` is kind-polymorphic, we are held back from making its
+complete use, only by the syntax of representing type indices. 
+
+Now, let us try defining the index of HList using a type-projection
+function called `list-attr`. list-attr has the sort of `HList -> List
+\*`, which means that it takes a term of non-indexed heterogenous list
+type, and produces a list of types of any kind. Here is our attempt at
+defining `list-attr`:
+
+    type-projection list-attr (HNil) = 'Nil
+    type-projection list-attr (HCons x xs) = 'Cons (f(x)) (list-attr xs) 
+
+Evidently, The above definition is not well-formed as `f`, which was
+used as a type-projection function in the above definition, is
+undefined.  However, the above definition is valid for any f with sort
+as `a -> \*`, i.e., any type-projection function from terms of type `a`
+to types of kind `\*`. Therefore, we parametrize the definition of
+list-attr over such projection functions to define a well-formed
+list-attr as
+
+    type-projection list-attr f (HNil) = 'Nil
+    type-projection list-attr f (HCons x xs) = 'Cons (f(x)) (list-attr xs) 
+
+Parametrized list-attr frees us from the burden of having to define
+multiple indexed versions of `HList`s. After elaborating list-attr
+together with the definition of HList datatype, we generate following
+types for its value constructors (represented in dependent type
+notation):
+
+      HNil : {v : HList | ∀ (f:a → *). (list-attr f) (v) = 'Nil}
+      HCons : {x:a} -> {xs : HList} -> {v : HList | ∀ (f:a → *). 
+                (list-attr f) (v) = 'Cons (f(x)) (list-attr(xs))}
+
+A question that arises at this point is, what if type a is un-indexed?
+How should we instantiate the parameter f in that case?  This problem
+can be easily solved, as a trivial type-projection function
+`type-of` can be defined for every valid haskell type, which just
+returns the type of its argument. Another trivial option is a constant
+function, which invariably returns an un-inhabited type.
+
+By instantiating f in (list-attr f) with different type-projection
+functions, we can capture different invariants of the HList datatype.
+For example, a 2-element heterogenous list of 1. string list (of
+length 1), and 2.  bool list (of length 2), respectively, can be typed
+as:
+
+    {v : HList | (list-attr type-of)(v) = 'Cons string ('Cons bool 'Nil) /\
+                 (list-attr length)(v) = 'Cons ('Succ 'Zero) ('Cons 'Zero 'Nil) }
+
+## Higher-order functions and parametric type-projections ##
+
+Parametric type-projections are highly useful to capture invariants of
+higher-order functions. With a type-projection function similar to
+list-attr defined for traditional list (`Vec a` datatype), we can type
+the higher-order map function as 
+
+    map : ∀a,b : *, pi1 : a → *, pi2 : b → *, {l : Vec a} 
+      → {f : {x:a} → {y:b | pi1(x) = pi2(y)} 
+      → {l' : Vec a | (list-attr pi2)(l') = (list-attr pi1)(l)}
+
+To demonstrate the generality of the above type, we show two examples
+of its utility in completely different contexts. In the first example,
+we use map function to increment each number in a list of natural
+numbers by one. By instantiating the type of map appropriately, we then
+assert that parity (Even/odd, as defined previously) of all numbers in
+the result list are inverses of corresponding numbers in original list.
+
+{% highlight haskell %}
+    plusOne :: {x : Nat} -> {y : Nat | parity(y) = inverse-parity (x)}
+    plusOne = Succ
+
+    l :: {v : Vec a | (list-attr parity)(v) = 'Cons 'Even ('Cons 'Even 'Nil) /\
+                (list-attr inverse-parity)(v) = 'Cons 'Odd ('Cons 'Odd 'Nil)}
+    l = Cons Zero (Cons Zero Nil)
+
+    l' :: {v : Vec a | (list-attr parity)(v) = 'Cons 'Odd ('Cons 'Odd 'Nil)}
+    l' = map plusOne l
+{% endhighlight %}
+
+For the second example, we consider a function that reverses each list
+in a list of lists using map, and asserts that length of each of these
+lists unchanged:
+
+{% highlight haskell %}
+    reverse : {l : Vec a} -> {l' : Vec a | length(l') = length(l)}
+    -- we omit the implementation of reverse as it is trivial.
+
+    row-wise-reverse : {m : Vec Vec a} -> {m' : Vec Vec a | 
+        (list-attr length)(m') = (list-attr length)(m)}
+    row-wise-reverse  = map reverse m
+{% endhighlight %}
+
+Similar to map, expressive types can be ascribed to many other
+higher-order functions, such as foldl, foldlr etc, utilizing
+parametric type-projections.
+

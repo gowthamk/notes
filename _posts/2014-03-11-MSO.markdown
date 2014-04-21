@@ -1,0 +1,36 @@
+LTL is equivalent to monadic first-order logic of order (i.e., of
+words) represented as FO(<). 
+Obviously, FO(<) is decidable.
+
+Monadic Second-Order Logic (MSO) is equivalent to regular languages:
+http://www.cmi.ac.in/~kumar/words/lecture02.pdf
+http://www.cmi.ac.in/~kumar/words/lecture02a.pdf
+
+http://www.tcs.tifr.res.in/~pandya/grad/aut06/lect3.pdf
+
+Certain fragments of path logics such as CTL can be expressed in MSO.
+Those fragments are decidable:
+http://www.automata.rwth-aachen.de/download/papers/thomas/tho09a.pdf
+http://www.labri.fr/perso/courcell/Conferences/ExpoJAF2011.pdf
+
+Formal Verif of Communication Protocols in Dist. Sys
+http://web.engr.illinois.edu/~pek1/publications/eddie/mipro03.pdf
+http://www.cs.bu.edu/techreports/pdf/2013-002-reusable-requirements-for-automated-verification.pdf
+
+
+
+Alloy
+-----------
+http://static.googleusercontent.com/media/research.google.com/en/us/pubs/archive/37040.pdf
+
+FRP
+----
+http://stackoverflow.com/questions/1028250/what-is-functional-reactive-programming/1030631#1030631
+
+Monad
+------
+https://dl.dropboxusercontent.com/u/7810909/docs/what-does-monad-mean/what-does-monad-mean/chunk-html/index.html
+
+Distributed Systems in Functional Lang
+----------------------------------------
+http://lara.epfl.ch/~kuncak/papers/DagandETAL08Opis.pdf

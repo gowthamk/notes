@@ -1,0 +1,67 @@
+---
+layout: post
+title:  "General Framework for Dependent Types in Haskell"
+---
+
+# General Framework for Dependent Types in Haskell #
+
+Dependent types for practical programming have been proposed in
+various formats by various authors. [Hughes et. al., 1996] proposed
+sized types, where data types, such as lists, trees etc., are indexed
+by natural numbers that denote their sizes. Cayenne [Augustsson, 1998]
+is perhaps the first language that extended a mainstream programming
+language (Haskell) with full dependent types, i.e., any language
+expression is eligible to be a type. The price that it pays for
+providing full dependent types is the decidability of type checking.
+Dependent ML (Xi and Pfenning, 1998) extended ML with indexed types,
+where type index objects can be drawn from any constraint domain. Type
+checking in DML is decidable, modulo decidability of the constraint
+domain. Dependent ML is more a language scheme than a language, as it
+generates languages with different type systems for different
+instantiations of constraint domain. Hybrid types (Flanagan et. al.,
+2006) is another full dependent type system with undecidable type
+checking, but undecidable type equivalences are cast as run-time
+checks, providing _dynamic type checking_. Liquid types [Rondon et.
+al., 2008, Kawaguchi et. al., 2009] is a dependent type system for
+Ocaml, which relies on predicate abstraction over finite set of
+logical predicates, and SMT based decision procedures to infer
+dependent types.
+
+Evidently, aforementioned works can be classified as those proposing
+full dependent type systems with undecidable type checking, and those
+which propose indexed type systems retaining decidability of type
+checking. Cayenne and Hybdid types fall into first category, whereas
+DML and sized types into second. Liquid types is an outlier, which we
+discuss towards the end. In full dependent type systems, there is
+no clear distinction between expressions of term and type language.
+In Cayenne, term and type language are one and the same. Terms with
+appropriate types/kinds are eligible to become types as the following
+demonstrates:
+
+    printf :: (fmt :: string) -> PrintType fmt,
+    where PrintType :: string -> *
+
+In the above type, PrintType is a function from haskell strings to
+haskell types (Int, Bool, Int -> Bool etc). It is written using
+haskell expression language by case-matching over strings. Hybdrid
+types, however, uses the following syntax for dependent types:
+
+    {v : B | e }
+
+where B is a base type (int, bool etc), and e, the type refinement, is
+any boolean expression from the term language. Since term and type
+languages mostly overlap in full dependent type systems, there are no
+well-defined _entry points_ or _conditions for promotion_ from term
+language to type language.
+
+Indexed types, on the other hand, clearly separate term and type
+language. DML, for instance, draws its type index objects from a
+separate constraint domain which is neither accessible to, nor has
+access to term language. Consequently, such indexed types are strictly
+less powerful than full (or partial, as we explain later) dependent
+types. For example, the following type, which is the first example of
+dependent types in [Pierce, Advanced Types and PL, 2005] cannot be
+typed in DML:
+
+    tabulate :: 
+
