@@ -47,12 +47,12 @@ refer to the [previous writeup]() for the introduction.
 Example 1
 =========
 
-Consider an integer register abstract datatype with encapsulated
+Consider an integer counter abstract datatype with encapsulated
 state, offering two functions: 
 
 {% highlight haskell %}
     read :: State Int Int
-    write :: Int -> State unit Int
+    increment :: State unit Int
 {% endhighlight %}
 
 In the above type specification, `State a b` is a monad that
@@ -69,20 +69,59 @@ is given below:
     read :: Int -> (Int * Int)
 
 Indeed, the `read` is expected to return a new state which is same as
-its old state. Similarly, the functional equivalent of type of `write`
+its old state. Similarly, the functional equivalent of type of `increment`
 is given below:
 
-    write :: Int -> Int -> (unit * Int)
+    increment :: Int -> (unit * Int)
 
-Function `write` takes an integer (x) and the current state (an
-integer), and returns a new state (an integer equal to x).
+Function `increment` takes the current state (an integer), and returns
+a new state, where the integer is incremented by one.
 
 A state monadic computation can be constructed by _binding_ `read`s and
-`writes`, which represents a trace of actions. For example, following
+`increment`s, which represents a trace of actions. For example, following
 haskell code:
 
 {% highlight haskell %}
-  do {
-    
-  }
+    do {
+      i <- read
+      increment 
+      j <- read
+    }
 {% endhighlight %}
+
+which expands to:
+
+{% highlight haskell %}
+    bind (bind (read, fn i => increment), fn () => read)
+{% endhighlight %}
+
+represents a sequential trace of actions on integer register data
+type. Due to sequential semantics, the value (j) read by the second
+`read` action in the trace is always greater than the value (i) read
+by the first `read`. 
+
+Now, let us consider the integer register datatype in a distributed
+setting, where the integer state is replicated across multiple
+physical nodes. Actions, such as `increment` are issued at any one of the
+physical nodes, and are gradually propagated to all other nodes in the
+distributed system. In other words, actions performed on one replica
+of integer counter eventually become visible to some action on every
+other replica of the counter. Let monadic computation shown
+above model the series of actions perfomed by an agent (eg: user) on
+the replicated integer counter. We call such computation as a session.
+As per our model of the system, the agent can issue each action of the
+session at a different replica of the integer counter. Under this
+setting, the invariant that j is always greater than i does not hold,
+as the agent can issue first two actions of the session one replica,
+but read the state (i.e., issue third action) at a different replica,
+which hasn't seen the effects of first two actions.
+
+An integer counter wishing to prevent 
+
+
+Scratch
+=========
+When we say an action A becomes visible
+to action B, we mean that action B operates on a state over which the
+effect A has already been perfomed. 
+
