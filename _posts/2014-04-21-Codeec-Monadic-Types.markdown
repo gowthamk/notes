@@ -178,6 +178,8 @@ satisfying the consistency specification.
 Let us take the example of `read` operation. Let us define `Ctxt` as a
 record type modeling the context: 
 
+datatype Effect = READ | INCREMENT
+
 {% highlight haskell %}
   type Ctxt = {Rvis :: {Effect * Effect}, 
                Rso :: {Effect * Effect},
@@ -188,15 +190,20 @@ We would write the
 type of read as following:
 
 {% highlight haskell %}
-    read :: CCT Int {\ef.\ctxt. ctxt.Rso(ef) ⊆ ctxt.Rvis(ef)}
+    read :: CCT Int Effect{READ} {\ef:Effect.\ctxt. ctxt.Rso(ef) ⊆ ctxt.Rvis(ef)}
+
 {% endhighlight %}
 
 Let us denote the refinement as p. The functional equivalent of the
 above type is as following:
 
 {% highlight haskell %}
-    read :: {c : Ctxt | \forall ef:Effect. ef = rd /\ ef \notin
-    dom(Rvis) /\ ef \notin dom(Rso). p ef ({Rso = })  } -> {x:int * rd:Effect * 
+    read :: {c : Ctxt | ∀ef:Effect. ef ∉ Rsa
+                     /\ ef ∉ dom(Rvis) 
+                     /\ p ef ({Rsa = c.Rsa U {(ef)}, 
+                               Rso = c.Rso U (c.Rsa X {(rd)}), 
+                               Rvis = c.Rvis})  } 
+    -> {x:int * rd:Effect * 
                        {c' : Ctxt | p rd c'
                                   /\ c'.Rsa = c.Rsa U {(rd)}
                                   /\ c.Rso U (c.Rsa X {(rd)}) ⊆ c'.Rso
