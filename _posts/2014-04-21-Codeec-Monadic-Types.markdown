@@ -175,42 +175,58 @@ the consistency specification of the action as a post-condition over
 the effect denoting the fact that the action took effect, while
 satisfying the consistency specification.
 
+Here is how we model effects:
+
+{% highlight haskell %}
+  {-# LANGUAGE GADTs #-}
+  {-# LANGUAGE DataKinds #-}
+
+  data EffectKind = Read | Increment
+
+  data Effect :: EffectKind -> * = 
+      Rd :: id -> Effect Read
+      Inc :: id -> Effect Increment 
+{% endhighlight %}
+
 Let us take the example of `read` operation. Let us define `Ctxt` as a
 record type modeling the context: 
 
-datatype Effect = READ | INCREMENT
-
 {% highlight haskell %}
-  type Ctxt = {Rvis :: {Effect * Effect}, 
-               Rso :: {Effect * Effect},
-               Rsa :: {Effect} }
+  type Ctxt = {Rvis :: {Effect a * Effect a}, 
+               Rso :: {Effect a * Effect a},
+               Rsa :: {Effect a} }
 {% endhighlight %}
 
-We would write the
-type of read as following:
+We would write the type of read as following:
 
 {% highlight haskell %}
-    read :: CCT Int Effect{READ} {\ef:Effect.\ctxt. ctxt.Rso(ef) ⊆ ctxt.Rvis(ef)}
+
+    read :: CCT Int (Effect Read) {\ef.\ctxt. ctxt.Rso(ef) ⊆ ctxt.Rvis(ef)}
 
 {% endhighlight %}
 
-Let us denote the refinement as p. The functional equivalent of the
-above type is as following:
+Let us denote the refinement as p. Also, for a relation $$R$$, let 
+$$univ(R) \triangleq dom(R) \cup range(R)$$. The functional equivalent
+of the above type is as following:
 
 {% highlight haskell %}
-    read :: {c : Ctxt | ∀ef:Effect. ef ∉ Rsa
-                     /\ ef ∉ dom(Rvis) 
-                     /\ p ef ({Rsa = c.Rsa U {(ef)}, 
-                               Rso = c.Rso U (c.Rsa X {(rd)}), 
-                               Rvis = c.Rvis})  } 
-    -> {x:int * rd:Effect * 
-                       {c' : Ctxt | p rd c'
-                                  /\ c'.Rsa = c.Rsa U {(rd)}
-                                  /\ c.Rso U (c.Rsa X {(rd)}) ⊆ c'.Rso
+    read :: {c :: Ctxt | ∀ef :: (Effect Read). 
+                        ef ∉ (univ(Rso) U dom(Rvis)
+                     /\ p ef ({Rso = c.Rso U (univ(c.Rso) X {(rd)}), 
+                               Rvis = c.Rvis}) } 
+    -> {x::int * rd::Effect * 
+                       {c' :: Ctxt | p rd c'
+                                  /\ c'.Rso = c.Rso U (univ(c.Rso) X {(rd)})
                                   /\ c.Rvis ⊆ c'.Rvis}}
 {% endhighlight %}
 
-Refinement (r?) of initial context is 
+Following is the type of bind:
+
+
+{% highlight haskell %}
+    -- This is still half-baked
+    bind :: ∀(a,b). ∀(e1,e2). ∀(p1,p2). CST a e1 p1 -> (a -> CST b e2 p2) -> CST b e2 (\ef1.\ef2.\ctxt. p1 ef1 ctxt /\ p2 ef2 ctx2)
+{% endhighlight %}
 
 Scratch
 =========
