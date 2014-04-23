@@ -98,7 +98,8 @@ which expands to:
 represents a sequential trace of actions on integer register data
 type. Due to sequential semantics, the value (j) read by the second
 `read` action in the trace is always greater than the value (i) read
-by the first `read`. 
+by the first `read`. This monotonic reads invariant is a consistency
+property of integer counter.
 
 Now, let us consider the integer register datatype in a distributed
 setting, where the integer state is replicated across multiple
@@ -116,8 +117,93 @@ as the agent can issue first two actions of the session one replica,
 but read the state (i.e., issue third action) at a different replica,
 which hasn't seen the effects of first two actions.
 
-An integer counter wishing to prevent 
+In order to constrain such anamoly and preserve the monotonous reads
+invaraint, we can constrain `read` action such that it takes effect if
+and only if all actions that precede the `read` action in current
+session are visible to the `read` action. Let _inVis_ be a unary
+predicate on actions such that for any action _x_, _inVis(x)_ if and
+only if _x_ is visible to the `read` action. Similarly, we define
+a unary predicate _inSo_ for _so_ relation. Now, the consistency
+specification for `read` (i.e., specfication of `read` that guarantees
+the consistency of integer counter's observable behaviour) can be
+defined as following:
 
+$$
+  \forall a. \forall x : State a int. inSo(x) \Rightarrow inVis(x)
+$$
+
+Since all actions of integer counter ADT are in state monad, we
+quantified over actions of state monad. Instead, we can define a
+monad called `IntCtrAct` that is effectively a state monad specialized
+to hide the state of integer counter. The integer counter ADT that
+uses `IntCtrAct` is given below:
+
+{% highlight haskell %}
+    read :: IntCtrAct int
+    increment :: IntCtrAct unit
+{% endhighlight %}
+
+`IntCtrAct a` is an action over integer counter that produces a value
+of type `a`. Using `IntCtrAct` monad, and eliding the type variable
+using underscore, we re-write the consistency spec of `read` as
+following:
+
+$$
+  \forall x : IntCtrAct \_. inSo(x) \Rightarrow inVis(x)
+$$
+
+Which straightforwardly states that all integer counter actions that
+precede the `read` action in current session must be visible to the
+`read` action.
+
+Consistency specification as a type
+===================================
+
+Observe that the consistency specification of `read` makes assertions
+over its dynamic context defined in terms of _vis_ and _so_ relations.
+This situation is analogous to the specification of reference and
+de-reference operations into program heap by treating the heap as an
+abstract map. The type-based approaches to write such specifications
+ascribe monadic types to such operations which conveniently treat heap
+as a hidden state encapsulated by the monad. We take the similar
+approach to write consistency specifications as types. We define a
+concurrent context monad (CCT), which encapsulates the concurrent
+context defined in terms of _vis_ and _so_ relations. We extend the
+result type of each action, such as `read`, with an `effect` type that
+explicitly denotes the effect produced by the action. We then write
+the consistency specification of the action as a post-condition over
+the effect denoting the fact that the action took effect, while
+satisfying the consistency specification.
+
+Let us take the example of `read` operation. Let us define `Ctxt` as a
+record type modeling the context: 
+
+{% highlight haskell %}
+  type Ctxt = {Rvis :: {Effect * Effect}, 
+               Rso :: {Effect * Effect},
+               Rsa :: {Effect} }
+{% endhighlight %}
+
+We would write the
+type of read as following:
+
+{% highlight haskell %}
+    read :: CCT Int {\ef.\ctxt. ctxt.Rso(ef) ⊆ ctxt.Rvis(ef)}
+{% endhighlight %}
+
+Let us denote the refinement as p. The functional equivalent of the
+above type is as following:
+
+{% highlight haskell %}
+    read :: {c : Ctxt | \forall ef:Effect. ef = rd /\ ef \notin
+    dom(Rvis) /\ ef \notin dom(Rso). p ef ({Rso = })  } -> {x:int * rd:Effect * 
+                       {c' : Ctxt | p rd c'
+                                  /\ c'.Rsa = c.Rsa U {(rd)}
+                                  /\ c.Rso U (c.Rsa X {(rd)}) ⊆ c'.Rso
+                                  /\ c.Rvis ⊆ c'.Rvis}}
+{% endhighlight %}
+
+Refinement (r?) of initial context is 
 
 Scratch
 =========
