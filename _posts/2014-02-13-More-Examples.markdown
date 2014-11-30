@@ -194,7 +194,8 @@ RId), and so on.
 
     (* Auxiliary def: Cons *)
      val Cons = fn x => fn xs => x::xs
-     rev : {l : 'a list} -> {v : 'a list | Robs(v) = Roas(l)}
+     (R) rev : {l : 'a list} -> {v : 'a list | Rmem[R](v) = Rmem[R](l) /\
+                                               Robs[R](v) = Roas[R](l)}
      val rev  = fn l => fold_left (RId, Rmem, Robs) l [] Cons 
 
    
@@ -209,11 +210,80 @@ results in an identity function for lists:
  results in failure of type checking. Similarly, append (i.e.,
  concat) has to be implemented with fold\_right:
 
-    append : {l1} -> {l2} -> {v | Robs(v) = Robs(l1) U Robs(l2) U
-      (Rmem(l1) X Rmem(l2))
-    val append = fn l1 => fn l2 => fold_right (RId, Rmem, Robs)
+    (R) concat : {l1} -> {l2} -> {v | Rmem[R](v) = Rmem[R](l1) U Rmem[R](l2) /\
+                                      Robs[R](v) = Robs[R](l1) U Robs[R](l2) U
+                                                  (Rmem[R](l1) X Rmem[R](l2))}
+    val concat = fn l1 => fn l2 => fold_right (RId, Rmem, Robs)
           l1 l2 Cons
 
 Using fold\_left, or passing [] in place of l2 results in type
 error
+
+The Quicksort Example
+======================
+
+The F\* reviewer's [example](http://rise4fun.com/FStar/dsE)
+
+Catalyst encoding:
+{% highlight ocaml %}
+    (*
+     * Let us parametrize the module over a relation
+     * R that relates x:'a to all y:'a, such that y >= x
+     *)
+    R :: 'a :-> {'a};
+
+    (*
+     * RIn r1 r2 = r1, if r1 ⊆ r2. ∅ otherwise
+     * RNin r1 r2 = r1, if r1 ∩ r2 = ∅. ∅ otherwise.
+     *)
+    RIn r1 r2 = r1 - (r1 - r2);
+    RNin r1 r2 = r1 - r2;
+
+    (*
+     * (fr1 p x) = {(x)}, if x \notin R(p) (i.e., if x<p). ∅ otherwise.
+     * (fr2 p x) = {(x)}, if x ∈ R(p) (i.e., if x >= p). ∅ otherwise.
+     * (fr3 (x,y)) = {(x,y)}, if y ∈ R(x) (i.e., y >= x). ∅ otherwise.
+     *)
+    let fr1 = \p.\(x). RNin {(x)} (R(p))
+    let fr2 = \p.\(x). RIn {(x)} (R(p))
+    let fr3 = \(x,y). {(x)} X RIn {(y)} (R(x))
+
+    (*
+     * partition takes a pivot p, a list l, and produces two lists l1 and
+     * l2. Elements of l1 are elements of l less than p, whereas elements
+     * of l2 are elements of l greater than or equal to p.
+     *)
+    partition : p -> l -> {x -> y -> {v | v=true <=> {(y)} ⊆ R(x)}}
+                  -> {l1 | Rmem(l1) = bind(Rmem(l),fr1 p) } * 
+                     {l2 | Rmem(l2) = bind(Rmem(l), fr2 p)}
+    fun partition p l cmp = case l of
+        [] => ([],[])
+      | x::xs =>
+        let
+          val (l1',l2') = partition p xs cmp
+        in
+          if cmp x p then (x::l1',l2')
+          else (l1',x::l2')
+        end
+
+    (*
+     * quicksort takes a list l, and produces a list v such that
+     * 1. v has same elements as l, and
+     * 2. Robs(v,x1,x2) => (x2 >= x1)
+     *)
+    quicksort : l -> {x -> y -> {v | v=true <=> {(y)} ⊆ R(x)}}
+                  -> {v | Rmem(v) = Rmem(l)
+                       /\ Robs(v) = bind (Robs(v),fr3)}
+    fun quicksort l cmp = case l of
+        [] => []
+      | x::xs =>
+        let
+          val (l1,l2) = partition x l cmp
+          val l1' = quicksort l1 cmp
+          val l2' = quicksort l2 cmp
+          val l' = append l1' l2'
+        in
+          l'
+        end 
+{% endhighlight %}
 

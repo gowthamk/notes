@@ -211,7 +211,7 @@ of the above type is as following:
 
 {% highlight haskell %}
     read :: {c :: Ctxt | ∀ef :: (Effect Read). 
-                        ef ∉ (univ(Rso) U dom(Rvis)
+                        ef ∉ (univ(Rso) U dom(Rvis))
                      /\ p ef ({Rso = c.Rso U (univ(c.Rso) X {(rd)}), 
                                Rvis = c.Rvis}) } 
     -> {x::int * rd::Effect * 
@@ -220,16 +220,111 @@ of the above type is as following:
                                   /\ c.Rvis ⊆ c'.Rvis}}
 {% endhighlight %}
 
-Following is the type of bind:
-
+Let us define a functions $$ext$$ on contexts, and $$wp$$ on
+propositions parametrized on effects, in the following way:
 
 {% highlight haskell %}
-    -- This is still half-baked
-    bind :: ∀(a,b). ∀(e1,e2). ∀(p1,p2). CST a e1 p1 -> (a -> CST b e2 p2) -> CST b e2 (\ef1.\ef2.\ctxt. p1 ef1 ctxt /\ p2 ef2 ctx2)
+    ext ::∀(a::EffectKind). Ctxt -> Effect a -> Ctxt
+    ext = fn c => fn rd => {Rso = c.Rso U (univ(c.Rso) X {(rd)}), Rvis = c.Rvis}
+
+    wp :: ∀(a::EffectKind). (Effect a -> Ctxt -> Prop) -> Ctxt -> Prop
+    wp = fn p => fn c => ∀ef:a. ef ∉ (univ(Rso) U dom(Rvis)) /\ p ef (ext c) 
 {% endhighlight %}
+
+Using these functions, we re-write the type of read as:
+
+{% highlight haskell %}
+    read :: {c :: Ctxt | wp p c} -> {int * {rd :: Effect} * 
+                      {c' :: Ctxt | p rd c' /\ c' = ext(c)}}
+{% endhighlight %}
+
+<!--
+  Following is the type of bind:
+  {% highlight haskell %}
+      bind :: ∀(a,b). ∀(ext1,ext2). ∀(p1,p2). CST a ext1 (∃<ef1>.p1) -> (a -> CST b ext2 (∃<ef2>.p2)) 
+                    -> CST b (ext2 o ext1) (\c'. ∃<ef1,ef2>. ∃c. c' = ext2 c /\ p1 c' /\ p2 c)
+  {% endhighlight %}
+-->
+
+The type of bind :
+
+{% highlight haskell %}
+    bind :: ∀(a,b). ∀(es1,es2). ∀(p1,p2). 
+      {m1 :: CST a | Ref(m1) = es1 ∧ p1 ctxt(m1)} -> 
+      {a -> {m2 :: CST b | Ref(m1) = es2 ∧ p2 ctxt(m2)}} ->
+      {m3 :: CST b | Ref(m3) = es1 ∪ es2 
+                   ∧ es1 X es2 ⊆ ctxt(m3).Rso 
+                   ∧ p1 ctxt(m3) ∧ p2 ctxt(m3)}
+{% endhighlight %}
+
+{% highlight haskell %}
+    bind :: ∀(a,b). ∀(es1,es2). ∀(p1,p2). 
+      m1 :: CST a es1 p1 -> 
+      {a -> {m2 :: CST b es2 p2}} ->
+      {m3 :: CST b (es1 ∪ es2) (\x.  es1 X es2 ⊆ x.Rso 
+                                   ∧ p1 x ∧ p2 x)}
+{% endhighlight %}
+
+Assumptions : (thread specific) Rso is a total order
+\forall a,b. Rso (a,b) ∨ Rso(b,a) 
+{% highlight haskell %}
+    pre :: Effect Set -> (Ctxt -> Prop) -> Ctxt -> Prop
+    pre es p = \x. (es is closed under x.Rvis)
+                 ∧ (es is closed under x.Rso)
+                 ∧ (p x)
+
+    post :: Effect Set -> (Ctxt -> Prop) -> Ctxt -> Ctxt -> Prop
+    post es p = \x.\x'. (x'.Rso = x.Rso)
+                      ∧ (x.Rvis ⊆ x'.Rvis)
+                      ∧ (p x')
+{% endhighlight %}
+
+Let `CST b me ms` be a well-formed type under a context Γ. The
+functional equivalent of the type under the context Γ is as following:
+
+{% highlight haskell %}
+    {c :: Ctxt | pre me ms c} -> {b * {es::Effect Set | es = me} 
+                                  * {c' :: Ctxt | post es ms c c'}
+{% endhighlight %}
+
+Note: Effects don't admit equality. Therefore, e1 is only equal to
+itself, but nothing else.
+
+Here are read and increment:
+
+{% highlight haskell %}
+    read :: ∃(ef :: Effect). CST int {(ef)} (\x. sort(ef) = RD 
+                         ∧ σ([\ef'.sort(ef') = INC],x.Rso(ef)) ⊆ x.Rvis(ef))
+    increment :: ∃(ef :: Effect). CST unit {(ef)} (\x. sort(ef) = INC)
+{% endhighlight %}
+
+And, here is an example program:
+
+{% highlight ocaml %}
+      val (ef1,m1) = read
+      val (ef2,m2) = increment
+      val m3 = bind {(ef1),(ef2)} m1 (fn _ => m2)
+{% endhighlight %}
+
+whose type is :
+
+{% highlight haskell %}
+    CST unit {(ef1),(ef2)} (\x. {(ef1,ef2)} ⊆ x.Rso 
+                              ∧ sort(ef1) = RD 
+                              ∧ σ(\ef'.sort(ef') = INC],
+                                  x.Rso(ef1)) ⊆ x.Rvis(ef))
+                              ∧ sort(ef2) = INC
+{% endhighlight %}
+
+Notes:
+=====
+We say a set S is closed under a binary relation R iff 
+  ∀x1,x2. x1 ∈ S ∧ R(x1,x2) ⇒ x2 ∈ S
 
 Scratch
 =========
+
+(\ctxt. wp (\ef1. \c1. post1 ef1 c1 /\ wp post2 c1) ctxt )
 When we say an action A becomes visible
 to action B, we mean that action B operates on a state over which the
 effect A has already been perfomed. 

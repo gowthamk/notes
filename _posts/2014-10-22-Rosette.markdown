@@ -1,0 +1,121 @@
+define-symbolic defines a symbolic variable along with a type
+assertion.
+
+(define-symbolic x boolean?) -~-> (declare-const (Bool x))
+
+(verify phi) -~-> (assert (not phi))
+                  (check-sat)
+                  (get-model)
+
+Let (verify phi) return a model M. Then:
+
+(evaluate expr M) -~-> M(expr)
+
+In other words, (evaluate expr) computes value of `expr` under model
+`M`.
+
+Here is an example rosette code:
+
+    (define-symbolic x boolean?)
+    (define-symbolic y boolean?)
+    (define-symbolic a boolean?)
+    (define-symbolic b boolean?)
+    (assert (eq? a (=> x y)))
+    (assert (eq? b (&& (not x) y)))
+    (verify (assert (eq? a b)))
+
+And here is its Z3 SMT-LIB version:
+
+    (declare-const x Bool)
+    (declare-const y Bool)
+    (declare-const a Bool)
+    (declare-const b Bool)
+    (assert (= a (=> x y)))
+    (assert (= b (and (not x) y)))
+    (assert (not (= a b)))
+    (check-sat)
+    (get-model)
+
+The TCL example in rosette:
+
+    #lang s-exp rosette
+    (define-symbolic x boolean?)
+    (define-symbolic y boolean?)
+    (define-symbolic a boolean?)
+    (define-symbolic b boolean?)
+    (define-symbolic c boolean?)
+    (define-symbolic d boolean?)
+    (assert (eq? x (xor (<=> a b) (<=> c d))))
+    (assert 
+     (eq? y (&& (! (&& (! (&& (! (&& a b)) (&& (! a) (! b))))
+                       (! (&& (&& (! c) (! d)) (! (&& c d))))))
+                (! (&& (&& (! (&& a b)) (! (&& (! a) (! b))))
+                       (&& (! (&& (! c) (! d))) (! (&& c d))))))))
+
+    (define M (verify (assert (eq? x y))))
+    (evaluate (list a b c d) M)
+
+
+Debugging involves localizing the fault, which can be done using
+minimal unsat cores.
+
+Qn: What is the relation between unsat cores and min/maxSMT problems?
+
+An example of UNSAT core extraction in Z3:
+
+    (set-option :smt.mbqi true)
+    (set-option :produce-unsat-cores true)
+    (declare-sort T)
+    (declare-const c0 T)
+    (declare-const c1 T)
+    (declare-const c2 T)
+    (declare-fun A (T) Bool)
+    (declare-fun B (T) Bool)
+    (declare-fun C (T) Bool)
+    (declare-fun D (T) Bool)
+
+    ;; A union B is a subset of C
+    (assert (! (forall ((x T)) (=> (or (A x) (B x)) (C x))) :named a1))
+
+    ;; B minus A is not empty
+    ;; That is, there exists an integer e that is B but not in A
+    (declare-const e T)
+    (assert (! (and (B e) (not (A e))) :named a2))
+
+    ;; D is equal to C
+    (assert (! (forall ((x T)) (iff (D x) (C x))) :named a3))
+    ;; But, D has an element not in C
+    (assert (! (exists ((x T)) (and (D x) (not (C x)))) :named a4))
+
+    ;; c0, c1 and c2 are in B
+    (assert (! (B c0) :named a5))
+    (assert (! (B c1) :named a6))
+    (assert (! (B c2) :named a7))
+
+    (check-sat)
+    (get-unsat-core)
+    ;; Despite so much of noise, Z3 finds a3 and a4 as unsat core
+
+Z3 also generates proofs, when check-sat returns UNSAT. There are 38
+proof rules that Z3 uses to construct proofs. They are listed in
+z\_api.h (for eg:Z3\_OP\_PR\_MONOTONICITY). Proof terms of Z3 are
+designed as natural deduction style (derivation tree) proofs that
+derive False (i.e., the root of the tree is always False). The syntax
+of the proof is not standardized by SMT-LIB. The constructor of False
+includes the two mutually incompatible propositions. This could be the
+starting point of search for unsat cores.
+
+The notes on unsat cores in ([SMT-LIB
+tutorial][http://www.grammatech.com/resource/smt/SMTLIBTutorial.pdf]) is good.
+Only top-level named formulas are included in unsat core.
+
+Rossette does not work well with loop programs. See
+loop-unrolling.rkt. Also see verify-rev.rkt.
+
+Rosette is basically a thin layer atop an SMT solver. As the paper
+mentions, it virtualizes access to the solver. Accordingly, solve,
+which checks satisfiability, and verify, which checks
+unsatisfiability, are the two main constructs offered by rosette.
+Remaining constructs (choose and synthesize) can be defined in terms
+of these main constructs.
+    
